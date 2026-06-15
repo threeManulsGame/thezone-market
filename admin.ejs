@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Админ-панель</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-dark text-light">
+  <div class="container mt-4">
+    <h1>⚙️ Админ-панель</h1>
+    <a href="/" class="btn btn-secondary mb-3">На рынок</a>
+
+    <div class="card bg-secondary mb-4">
+      <div class="card-header">📰 Добавить новость</div>
+      <div class="card-body">
+        <form action="/admin/news" method="post">
+          <input name="title" class="form-control mb-2" placeholder="Заголовок" required>
+          <textarea name="body" class="form-control mb-2" placeholder="Текст новости"></textarea>
+          <label>Влияние на цену (%): <span id="impactVal">0</span>%</label>
+          <input type="range" name="impact" class="form-range" min="-50" max="50" value="0" oninput="document.getElementById('impactVal').textContent=this.value">
+          <button class="btn btn-warning">Опубликовать</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card bg-secondary mb-4">
+      <div class="card-header">🔄 Перевод алмазов/акций</div>
+      <div class="card-body">
+        <form action="/admin/transfer" method="post">
+          <input name="from" placeholder="Discord ID отправителя" class="form-control mb-2" required>
+          <input name="to" placeholder="Discord ID получателя" class="form-control mb-2" required>
+          <select name="type" class="form-select mb-2">
+            <option value="diamonds">Алмазы</option>
+            <option value="shares">Акции</option>
+          </select>
+          <input type="number" step="any" name="amount" placeholder="Сумма" class="form-control mb-2" required>
+          <button class="btn btn-primary">Перевести</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card bg-secondary mb-4">
+      <div class="card-header">✏️ Установить баланс пользователя</div>
+      <div class="card-body">
+        <form action="/admin/setbalance" method="post">
+          <input name="discord_id" placeholder="Discord ID" class="form-control mb-2" required>
+          <select name="field" class="form-select mb-2">
+            <option value="diamonds">Алмазы</option>
+            <option value="shares">Акции</option>
+          </select>
+          <input type="number" step="any" name="value" placeholder="Новое значение" class="form-control mb-2" required>
+          <button class="btn btn-info">Установить</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card bg-secondary mb-4">
+      <div class="card-header">🛠 Управление пулом (вручную)</div>
+      <div class="card-body">
+        <form action="/admin/pool" method="post">
+          <input type="number" step="any" name="diamonds" placeholder="Алмазы в пуле" class="form-control mb-2" required>
+          <input type="number" step="any" name="shares" placeholder="Акции в пуле" class="form-control mb-2" required>
+          <button class="btn btn-danger">Обновить пул</button>
+        </form>
+      </div>
+    </div>
+
+    <h3>Пользователи</h3>
+    <table class="table table-dark table-striped">
+      <thead><tr><th>ID</th><th>Имя</th><th>💎</th><th>📈</th></tr></thead>
+      <tbody>
+        <% users.forEach(u => { %>
+          <tr>
+            <td><%= u.discord_id %></td>
+            <td><%= u.username %></td>
+            <td><%= u.diamond_balance %></td>
+            <td><%= u.share_balance %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>
