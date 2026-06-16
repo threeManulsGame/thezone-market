@@ -1,6 +1,7 @@
 {
   "name": "thezone-market",
   "version": "1.0.0",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "bot": "node bot.js"
