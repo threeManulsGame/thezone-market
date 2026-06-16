@@ -12,7 +12,7 @@ const db = new Database('market.db');
 
 // Настройки из .env
 const ADMIN_ID = process.env.ADMIN_DISCORD_ID;
-const STARTING_DIAMONDS = parseInt(process.env.STARTING_DIAMONDS) || 0;
+const STARTING_DIAMONDS = 0;
 const DRIFT_INTERVAL_MS = 5000;          // 5 секунд
 const DRIFT_FACTOR = 0.0002;            // ослабленный дрейф (±0.02% за тик)
 const PRICE_LOW = 3;                    // нижний порог
