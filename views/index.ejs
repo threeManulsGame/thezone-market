@@ -55,7 +55,14 @@
         <div class="card bg-secondary text-light">
           <div class="card-body text-center">
             <h3>Цена акции</h3>
-            <h1 class="display-4"><%= price %> 💎</h1>
+            <h1 class="display-4">
+              <span style="color: <%= priceChange > 0 ? '#26a69a' : (priceChange < 0 ? '#ef5350' : 'inherit') %>">
+                <%= price %> 💎
+              </span>
+              <small style="font-size: 0.5em; color: <%= priceChange >=0 ? '#26a69a' : '#ef5350' %>">
+                <%= priceChange > 0 ? '+' : '' %><%= priceChange.toFixed(4) %>
+              </small>
+            </h1>
           </div>
         </div>
       </div>
