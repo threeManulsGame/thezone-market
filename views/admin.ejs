@@ -10,6 +10,40 @@
     <h1>⚙️ Админ-панель</h1>
     <a href="/" class="btn btn-secondary mb-3">На рынок</a>
 
+    <!-- Управление рынком -->
+    <div class="card bg-secondary mb-4">
+      <div class="card-header">🕹 Управление торгами</div>
+      <div class="card-body">
+        <p>Статус: 
+          <% if (marketOpen) { %>
+            <span class="badge bg-success">Открыты</span>
+          <% } else { %>
+            <span class="badge bg-danger">Закрыты</span>
+          <% } %>
+        </p>
+        <form action="/admin/market" method="post" class="d-inline">
+          <input type="hidden" name="action" value="open">
+          <button class="btn btn-success" <%= marketOpen ? 'disabled' : '' %>>Открыть торги</button>
+        </form>
+        <form action="/admin/market" method="post" class="d-inline ms-2">
+          <input type="hidden" name="action" value="close">
+          <button class="btn btn-warning" <%= !marketOpen ? 'disabled' : '' %>>Закрыть торги</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Сброс биржи -->
+    <div class="card bg-secondary mb-4">
+      <div class="card-header">💣 Полный сброс биржи</div>
+      <div class="card-body">
+        <p class="text-danger">Это удалит всех пользователей (кроме вас), пул, новости, историю и ожидающие начисления. Начальная цена вернётся к 4 алмазам.</p>
+        <form action="/admin/reset" method="post">
+          <input type="text" name="code" class="form-control mb-2" placeholder="Введите кодовое слово RESET_THE_ZONE" required>
+          <button class="btn btn-danger" onclick="return confirm('Точно сбросить всё?')">Сбросить биржу</button>
+        </form>
+      </div>
+    </div>
+
     <!-- Новости -->
     <div class="card bg-secondary mb-4">
       <div class="card-header">📰 Добавить новость</div>
@@ -24,9 +58,9 @@
       </div>
     </div>
 
-    <!-- Перевод между зарегистрированными -->
+    <!-- Переводы между зарегистрированными -->
     <div class="card bg-secondary mb-4">
-      <div class="card-header">🔄 Перевод алмазов/акций (между существующими пользователями)</div>
+      <div class="card-header">🔄 Перевод алмазов/акций</div>
       <div class="card-body">
         <form action="/admin/transfer" method="post">
           <input name="from" placeholder="Discord ID отправителя" class="form-control mb-2" required>
@@ -41,9 +75,9 @@
       </div>
     </div>
 
-    <!-- Начисление любому ID (даже незарегистрированному) -->
+    <!-- Начисление любому ID -->
     <div class="card bg-secondary mb-4">
-      <div class="card-header">💸 Начислить алмазы/акции (можно любому Discord ID, в т.ч. новому)</div>
+      <div class="card-header">💸 Начислить алмазы/акции (любому Discord ID)</div>
       <div class="card-body">
         <form action="/admin/pending" method="post">
           <input name="discord_id" placeholder="Discord ID" class="form-control mb-2" required>
@@ -54,13 +88,13 @@
           <input type="number" step="any" name="amount" placeholder="Сумма" class="form-control mb-2" required>
           <button class="btn btn-success">Начислить</button>
         </form>
-        <small class="text-muted">Если пользователь уже зарегистрирован, средства поступят сразу. Если нет – будут ждать первого входа.</small>
+        <small class="text-muted">Если пользователь не зарегистрирован, начисления будут ждать его первого входа.</small>
       </div>
     </div>
 
     <!-- Ожидающие начисления -->
     <div class="card bg-secondary mb-4">
-      <div class="card-header">⏳ Ожидающие начисления (для незарегистрированных)</div>
+      <div class="card-header">⏳ Ожидающие начисления</div>
       <div class="card-body">
         <% if (pending.length === 0) { %>
           <p>Нет ожидающих начислений.</p>
@@ -77,9 +111,9 @@
       </div>
     </div>
 
-    <!-- Установить баланс существующему -->
+    <!-- Установка точного баланса -->
     <div class="card bg-secondary mb-4">
-      <div class="card-header">✏️ Установить баланс пользователя (точное значение)</div>
+      <div class="card-header">✏️ Установить баланс</div>
       <div class="card-body">
         <form action="/admin/setbalance" method="post">
           <input name="discord_id" placeholder="Discord ID" class="form-control mb-2" required>
@@ -95,7 +129,7 @@
 
     <!-- Управление пулом -->
     <div class="card bg-secondary mb-4">
-      <div class="card-header">🛠 Управление пулом (вручную)</div>
+      <div class="card-header">🛠 Управление пулом</div>
       <div class="card-body">
         <form action="/admin/pool" method="post">
           <input type="number" step="any" name="diamonds" placeholder="Алмазы в пуле" class="form-control mb-2" required>
@@ -105,7 +139,7 @@
       </div>
     </div>
 
-    <!-- Пользователи -->
+    <!-- Список пользователей -->
     <h3>Пользователи</h3>
     <table class="table table-dark table-striped">
       <thead><tr><th>ID</th><th>Имя</th><th>💎</th><th>📈</th></tr></thead>
