@@ -12,10 +12,10 @@ const db = new Database('market.db');
 // Настройки
 const ADMIN_ID = process.env.ADMIN_DISCORD_ID;
 const STARTING_DIAMONDS = parseInt(process.env.STARTING_DIAMONDS) || 1000;
-const DRIFT_INTERVAL_MS = 5000;       // как часто дрейфует цена (5 сек)
-const DRIFT_FACTOR = 0.0005;          // амплитуда дрейфа (±0.05% за тик)
+const DRIFT_INTERVAL_MS = 5000;
+const DRIFT_FACTOR = 0.0005;
 
-// Создание таблиц
+// === База данных: создание таблиц ===
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     discord_id TEXT PRIMARY KEY,
@@ -41,9 +41,14 @@ db.exec(`
     sess TEXT,
     expired INTEGER
   );
+  CREATE TABLE IF NOT EXISTS price_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    price REAL NOT NULL,
+    timestamp INTEGER DEFAULT (CAST(strftime('%s','now') AS INTEGER))
+  );
 `);
 
-// Кастомное хранилище сессий в SQLite
+// Кастомное хранилище сессий
 class SQLiteStore extends session.Store {
   get(sid, cb) {
     const row = db.prepare('SELECT sess FROM sessions WHERE sid = ? AND expired > ?').get(sid, Date.now());
@@ -61,17 +66,16 @@ class SQLiteStore extends session.Store {
   }
 }
 
-// Инициализация пула и админа
+// Инициализация пула и админа при первом запуске
 const poolRow = db.prepare('SELECT * FROM pool WHERE id=1').get();
 if (!poolRow) {
   const insertUser = db.prepare('INSERT OR IGNORE INTO users(discord_id, username, avatar, diamond_balance, share_balance) VALUES (?, ?, ?, ?, ?)');
-  insertUser.run(ADMIN_ID, 'Admin', '', 2000000, 1000000); // 2M алмазов и 1M акций
-  // Перемещаем 1M алмазов и 1M акций в пул
+  insertUser.run(ADMIN_ID, 'Admin', '', 2000000, 1000000);
   db.prepare('UPDATE users SET diamond_balance = diamond_balance - 1000000, share_balance = share_balance - 1000000 WHERE discord_id = ?').run(ADMIN_ID);
   db.prepare('INSERT INTO pool (id, diamonds, shares) VALUES (1, 1000000, 1000000)').run();
 }
 
-// Passport
+// Passport настройки
 passport.serializeUser((user, done) => done(null, user.discord_id));
 passport.deserializeUser((id, done) => {
   const user = db.prepare('SELECT * FROM users WHERE discord_id = ?').get(id);
@@ -108,18 +112,17 @@ app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  cookie: { maxAge: 7 * 24 * 60 * 60 * 1000 } // 7 дней
+  cookie: { maxAge: 7 * 24 * 60 * 60 * 1000 }
 }));
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Middleware для проверки авторизации
 function ensureAuth(req, res, next) {
   if (req.isAuthenticated()) return next();
   res.redirect('/auth/discord');
 }
 
-// Маршруты
+// === Маршруты ===
 app.get('/auth/discord', passport.authenticate('discord'));
 app.get('/auth/discord/callback',
   passport.authenticate('discord', { failureRedirect: '/' }),
@@ -129,14 +132,13 @@ app.get('/logout', (req, res) => {
   req.logout(() => res.redirect('/'));
 });
 
-// Главная страница (рынок)
+// Главная страница
 app.get('/', ensureAuth, (req, res) => {
   const pool = db.prepare('SELECT * FROM pool WHERE id=1').get();
   const price = pool.diamonds / pool.shares;
   const user = req.user;
   const news = db.prepare('SELECT * FROM news ORDER BY created_at DESC LIMIT 10').all();
 
-  // Для списка акционеров >1% вычислим общий объём акций
   const totalShares = pool.shares + db.prepare('SELECT COALESCE(SUM(share_balance),0) as total FROM users').get().total;
   const majorShareholders = db.prepare('SELECT username, share_balance FROM users WHERE share_balance > 0 AND share_balance / ? > 0.01 ORDER BY share_balance DESC').all(totalShares);
 
@@ -158,12 +160,14 @@ app.post('/buy', ensureAuth, (req, res) => {
   const user = req.user;
   const pool = db.prepare('SELECT * FROM pool WHERE id=1').get();
   if (sharesToBuy >= pool.shares) return res.send('Недостаточно акций в пуле.');
+
   const x = pool.diamonds, y = pool.shares;
   const cost = (x * sharesToBuy) / (y - sharesToBuy);
   if (user.diamond_balance < cost) return res.send('Недостаточно алмазов.');
 
   db.prepare('UPDATE pool SET diamonds = diamonds + ?, shares = shares - ? WHERE id=1').run(cost, sharesToBuy);
   db.prepare('UPDATE users SET diamond_balance = diamond_balance - ?, share_balance = share_balance + ? WHERE discord_id = ?').run(cost, sharesToBuy, user.discord_id);
+  recordPrice();
   res.redirect('/');
 });
 
@@ -182,6 +186,7 @@ app.post('/sell', ensureAuth, (req, res) => {
 
   db.prepare('UPDATE pool SET diamonds = diamonds - ?, shares = shares + ? WHERE id=1').run(revenue, sharesToSell);
   db.prepare('UPDATE users SET diamond_balance = diamond_balance + ?, share_balance = share_balance - ? WHERE discord_id = ?').run(revenue, sharesToSell, user.discord_id);
+  recordPrice();
   res.redirect('/');
 });
 
@@ -201,12 +206,12 @@ app.post('/admin/news', ensureAuth, (req, res) => {
   if (!title || isNaN(impactNum)) return res.redirect('/admin');
 
   db.prepare('INSERT INTO news (title, body, impact) VALUES (?, ?, ?)').run(title, body, impactNum);
-  // Применить импакт к пулу: умножаем алмазы на (1 + impact/100)
   db.prepare('UPDATE pool SET diamonds = diamonds * ? WHERE id=1').run(1 + impactNum / 100);
+  recordPrice();
   res.redirect('/admin');
 });
 
-// Перевод алмазов или акций (админ -> пользователь или между пользователями)
+// Перевод алмазов/акций
 app.post('/admin/transfer', ensureAuth, (req, res) => {
   if (req.user.discord_id !== ADMIN_ID) return res.status(403).end();
   const { from, to, type, amount } = req.body;
@@ -229,7 +234,7 @@ app.post('/admin/transfer', ensureAuth, (req, res) => {
   res.redirect('/admin');
 });
 
-// Прямое изменение баланса пользователя (админ может вписать любое число)
+// Прямое изменение баланса
 app.post('/admin/setbalance', ensureAuth, (req, res) => {
   if (req.user.discord_id !== ADMIN_ID) return res.status(403).end();
   const { discord_id, field, value } = req.body;
@@ -249,6 +254,7 @@ app.post('/admin/pool', ensureAuth, (req, res) => {
   const d = parseFloat(diamonds), s = parseFloat(shares);
   if (isNaN(d) || isNaN(s) || d <= 0 || s <= 0) return res.redirect('/admin');
   db.prepare('UPDATE pool SET diamonds = ?, shares = ? WHERE id=1').run(d, s);
+  recordPrice();
   res.redirect('/admin');
 });
 
@@ -260,13 +266,92 @@ app.get('/shareholders', ensureAuth, (req, res) => {
   res.render('shareholders', { shareholders, totalShares, isAdmin: req.user.discord_id === ADMIN_ID });
 });
 
-// Случайный дрейф цены
+// === API для графика ===
+app.get('/api/price-history', ensureAuth, (req, res) => {
+  const { interval, type } = req.query; // interval: 5m,15m,30m,1h,4h,12h,1d / 1h,4h,12h,1d,1w,1M,1y,all
+  if (!interval || !type) return res.status(400).json({ error: 'interval and type required' });
+
+  const now = Math.floor(Date.now() / 1000);
+  let since;
+  const candleIntervals = ['5m','15m','30m','1h','4h','12h','1d'];
+  const lineIntervals = ['1h','4h','12h','1d','1w','1M','1y','all'];
+
+  if (type === 'candle') {
+    if (!candleIntervals.includes(interval)) return res.status(400).json({ error: 'Invalid candle interval' });
+    // Определяем период в секундах
+    const periodMap = { '5m':300, '15m':900, '30m':1800, '1h':3600, '4h':14400, '12h':43200, '1d':86400 };
+    const periodSec = periodMap[interval];
+    // Берём данные за последние 200 свечей
+    since = now - periodSec * 200;
+    if (since < 0) since = 0;
+    const rows = db.prepare('SELECT price, timestamp FROM price_history WHERE timestamp >= ? ORDER BY timestamp ASC').all(since);
+    // Группируем в свечи
+    const candles = [];
+    let currentCandle = null;
+    for (const row of rows) {
+      const bucket = row.timestamp - (row.timestamp % periodSec);
+      if (!currentCandle || currentCandle.time !== bucket) {
+        if (currentCandle) candles.push(currentCandle);
+        currentCandle = {
+          time: bucket,
+          open: row.price,
+          high: row.price,
+          low: row.price,
+          close: row.price
+        };
+      } else {
+        if (row.price > currentCandle.high) currentCandle.high = row.price;
+        if (row.price < currentCandle.low) currentCandle.low = row.price;
+        currentCandle.close = row.price;
+      }
+    }
+    if (currentCandle) candles.push(currentCandle);
+    return res.json({ type: 'candle', data: candles });
+  }
+  else if (type === 'line') {
+    if (!lineIntervals.includes(interval)) return res.status(400).json({ error: 'Invalid line interval' });
+    let since;
+    const nowDate = new Date();
+    switch (interval) {
+      case '1h': since = Math.floor(Date.now()/1000) - 3600; break;
+      case '4h': since = Math.floor(Date.now()/1000) - 14400; break;
+      case '12h': since = Math.floor(Date.now()/1000) - 43200; break;
+      case '1d': since = Math.floor(Date.now()/1000) - 86400; break;
+      case '1w': since = Math.floor(Date.now()/1000) - 604800; break;
+      case '1M': since = Math.floor(Date.now()/1000) - 2592000; break; // ~30 дней
+      case '1y': since = Math.floor(Date.now()/1000) - 31536000; break; // 365 дней
+      case 'all': since = 0; break;
+      default: since = Math.floor(Date.now()/1000) - 86400;
+    }
+    let rows = db.prepare('SELECT price, timestamp FROM price_history WHERE timestamp >= ? ORDER BY timestamp ASC').all(since);
+    if (rows.length === 0) return res.json({ type: 'line', data: [] });
+
+    // Если точек > 1500, прореживаем
+    if (rows.length > 1500) {
+      const step = Math.floor(rows.length / 1500);
+      rows = rows.filter((_, i) => i % step === 0);
+    }
+    const data = rows.map(r => ({ time: r.timestamp, value: r.price }));
+    return res.json({ type: 'line', data });
+  } else {
+    return res.status(400).json({ error: 'Invalid type' });
+  }
+});
+
+// === Вспомогательные функции ===
+function recordPrice() {
+  const pool = db.prepare('SELECT * FROM pool WHERE id=1').get();
+  const price = pool.diamonds / pool.shares;
+  db.prepare('INSERT INTO price_history (price) VALUES (?)').run(price);
+}
+
 function applyDrift() {
   const pool = db.prepare('SELECT * FROM pool WHERE id=1').get();
   const drift = (Math.random() - 0.5) * 2 * DRIFT_FACTOR;
   const newDiamonds = pool.diamonds * (1 + drift);
   if (newDiamonds > 0) {
     db.prepare('UPDATE pool SET diamonds = ? WHERE id=1').run(newDiamonds);
+    recordPrice();
   }
 }
 setInterval(applyDrift, DRIFT_INTERVAL_MS);
