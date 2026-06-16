@@ -5,6 +5,12 @@
   <title>The Zone Market</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+  <style>
+    #chart-container { width: 100%; height: 500px; margin-top: 20px; background: #1e1e1e; border-radius: 8px; overflow: hidden; }
+    .chart-controls { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+    .chart-controls select { background: #2c2c2c; color: #eee; border: 1px solid #555; border-radius: 4px; padding: 4px 8px; }
+  </style>
 </head>
 <body class="bg-dark text-light">
   <nav class="navbar navbar-expand-lg navbar-dark bg-black mb-4">
@@ -77,6 +83,163 @@
         </ul>
       </div>
     </div>
+
+    <!-- График -->
+    <h4 class="mt-5">График цены</h4>
+    <div class="chart-controls">
+      <label>Тип:</label>
+      <select id="chartType">
+        <option value="line">Линейный</option>
+        <option value="candle">Свечной</option>
+      </select>
+      <label>Интервал:</label>
+      <select id="chartInterval">
+        <optgroup label="Свечи">
+          <option value="5m" data-type="candle">5 мин</option>
+          <option value="15m" data-type="candle">15 мин</option>
+          <option value="30m" data-type="candle">30 мин</option>
+          <option value="1h" data-type="candle">1 час</option>
+          <option value="4h" data-type="candle">4 часа</option>
+          <option value="12h" data-type="candle">12 часов</option>
+          <option value="1d" data-type="candle">День</option>
+        </optgroup>
+        <optgroup label="Линия">
+          <option value="1h" data-type="line">1 час</option>
+          <option value="4h" data-type="line">4 часа</option>
+          <option value="12h" data-type="line">12 часов</option>
+          <option value="1d" data-type="line">1 день</option>
+          <option value="1w" data-type="line">1 неделя</option>
+          <option value="1M" data-type="line">1 месяц</option>
+          <option value="1y" data-type="line">1 год</option>
+          <option value="all" data-type="line">Всё</option>
+        </optgroup>
+      </select>
+    </div>
+    <div id="chart-container"></div>
   </div>
+
+  <script>
+    const container = document.getElementById('chart-container');
+    const chartTypeSelect = document.getElementById('chartType');
+    const intervalSelect = document.getElementById('chartInterval');
+    let chart, candleSeries, lineSeries;
+
+    function createChart() {
+      if (chart) {
+        chart.remove();
+        chart = null;
+        candleSeries = null;
+        lineSeries = null;
+      }
+      const type = chartTypeSelect.value;
+      const interval = intervalSelect.value;
+      const containerEl = container;
+
+      // Инициализация графика Lightweight Charts
+      chart = LightweightCharts.createChart(containerEl, {
+        width: containerEl.clientWidth,
+        height: containerEl.clientHeight,
+        layout: {
+          backgroundColor: '#1e1e1e',
+          textColor: '#d1d4dc',
+        },
+        grid: {
+          vertLines: { color: '#2B2B43' },
+          horzLines: { color: '#2B2B43' },
+        },
+        crosshair: {
+          mode: LightweightCharts.CrosshairMode.Normal,
+        },
+        timeScale: {
+          timeVisible: true,
+          secondsVisible: false,
+        },
+      });
+
+      // Загрузка данных
+      fetch(`/api/price-history?type=${type}&interval=${interval}`)
+        .then(r => r.json())
+        .then(json => {
+          if (type === 'candle') {
+            candleSeries = chart.addCandlestickSeries({
+              upColor: '#26a69a',
+              downColor: '#ef5350',
+              borderDownColor: '#ef5350',
+              borderUpColor: '#26a69a',
+              wickDownColor: '#ef5350',
+              wickUpColor: '#26a69a',
+            });
+            candleSeries.setData(json.data);
+          } else {
+            lineSeries = chart.addLineSeries({
+              color: '#2962FF',
+              lineWidth: 2,
+            });
+            lineSeries.setData(json.data);
+          }
+        })
+        .catch(err => console.error('Ошибка загрузки данных графика:', err));
+    }
+
+    function resizeChart() {
+      if (chart) {
+        chart.resize(container.clientWidth, container.clientHeight);
+      }
+    }
+
+    // Обработчики изменения селектов
+    chartTypeSelect.addEventListener('change', () => {
+      updateIntervalOptions();
+      createChart();
+    });
+
+    intervalSelect.addEventListener('change', createChart);
+
+    // При загрузке и изменении размера окна
+    window.addEventListener('load', () => {
+      updateIntervalOptions();
+      createChart();
+    });
+    window.addEventListener('resize', resizeChart);
+
+    // Динамически включаем нужные интервалы в зависимости от типа графика
+    function updateIntervalOptions() {
+      const type = chartTypeSelect.value;
+      const options = intervalSelect.options;
+      for (let i = 0; i < options.length; i++) {
+        const opt = options[i];
+        const optType = opt.getAttribute('data-type');
+        if (optType) {
+          opt.disabled = (optType !== type);
+          // Скрыть выключенные можно через opt.hidden, но просто блокируем
+        }
+      }
+      // Выбираем первый неотключенный вариант
+      for (let i = 0; i < options.length; i++) {
+        if (!options[i].disabled && options[i].getAttribute('data-type')) {
+          intervalSelect.value = options[i].value;
+          break;
+        }
+      }
+    }
+
+    // Автообновление графика каждые 10 секунд
+    setInterval(() => {
+      if (chart) {
+        const type = chartTypeSelect.value;
+        const interval = intervalSelect.value;
+        fetch(`/api/price-history?type=${type}&interval=${interval}`)
+          .then(r => r.json())
+          .then(json => {
+            if (type === 'candle' && candleSeries) {
+              candleSeries.setData(json.data);
+            } else if (type === 'line' && lineSeries) {
+              lineSeries.setData(json.data);
+            }
+          })
+          .catch(e => {});
+      }
+    }, 10000);
+  </script>
 </body>
 </html>
