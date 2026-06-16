@@ -5,7 +5,6 @@
   <title>The Zone Market</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <!-- Сначала пробуем локальную копию, затем CDN -->
   <script src="/js/lightweight-charts.standalone.production.js"></script>
   <script>
     if (typeof LightweightCharts === 'undefined') {
@@ -13,19 +12,13 @@
     }
   </script>
   <style>
-    #chart-container { 
-      width: 100%; 
-      height: 500px; 
-      margin-top: 20px; 
-      background: #1e1e1e; 
-      border-radius: 8px; 
-      position: relative; 
-      overflow: hidden; 
-    }
+    #chart-container { width: 100%; height: 500px; margin-top: 20px; background: #1e1e1e; border-radius: 8px; overflow: hidden; }
     .chart-controls { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
     .chart-controls select { background: #2c2c2c; color: #eee; border: 1px solid #555; border-radius: 4px; padding: 4px 8px; }
     .debug-info { font-size: 0.85rem; color: #aaa; margin-top: 5px; }
     .error-message { color: #ff6b6b; margin-top: 10px; }
+    .market-closed { background: #dc3545; color: white; padding: 5px 10px; border-radius: 4px; }
+    .market-open { background: #198754; color: white; padding: 5px 10px; border-radius: 4px; }
   </style>
 </head>
 <body class="bg-dark text-light">
@@ -72,33 +65,49 @@
             <h5>Пул ликвидности</h5>
             <p>Алмазов: <%= pool.diamonds.toLocaleString() %></p>
             <p>Акций: <%= pool.shares.toLocaleString() %></p>
+            <p>Статус: 
+              <% if (marketOpen) { %>
+                <span class="market-open">Открыт</span>
+              <% } else { %>
+                <span class="market-closed">Закрыт</span>
+              <% } %>
+            </p>
           </div>
         </div>
       </div>
     </div>
 
+    <% if (!marketOpen) { %>
+      <div class="alert alert-warning">Рынок закрыт. Торги будут доступны в часы работы (7:00–19:00 GMT+3).</div>
+    <% } %>
+
     <div class="row">
       <div class="col-md-6">
         <h4>Купить / Продать</h4>
-        <form action="/buy" method="post" class="mb-2">
-          <div class="input-group">
-            <input type="number" step="any" name="shares" class="form-control" placeholder="Количество акций" required>
-            <button class="btn btn-success">Купить</button>
-          </div>
-        </form>
-        <form action="/sell" method="post">
-          <div class="input-group">
-            <input type="number" step="any" name="shares" class="form-control" placeholder="Количество акций" required>
-            <button class="btn btn-danger">Продать</button>
-          </div>
-        </form>
+        <% if (marketOpen) { %>
+          <form action="/buy" method="post" class="mb-2">
+            <div class="input-group">
+              <input type="number" step="any" name="shares" class="form-control" placeholder="Количество акций" required>
+              <button class="btn btn-success">Купить</button>
+            </div>
+          </form>
+          <form action="/sell" method="post">
+            <div class="input-group">
+              <input type="number" step="any" name="shares" class="form-control" placeholder="Количество акций" required>
+              <button class="btn btn-danger">Продать</button>
+            </div>
+          </form>
+        <% } else { %>
+          <p class="text-muted">Торги приостановлены.</p>
+        <% } %>
       </div>
       <div class="col-md-6">
         <h4>Новости</h4>
         <ul class="list-group">
           <% news.forEach(n => { %>
             <li class="list-group-item bg-dark text-light border-secondary">
-              <strong><%= n.title %></strong> <span class="badge bg-<%= n.impact >=0 ? 'success' : 'danger' %>"><%= n.impact >0 ? '+' : '' %><%= n.impact %>%</span>
+              <strong><%= n.title %></strong> <span class="badge bg-<%= n.impact >=0 ? 'success' : 'danger' %>"><%= n.impact >0 ? '+' : '' %><%= n.impact.toFixed(2) %>%</span>
+              <% if (!n.applied) { %><span class="badge bg-warning">Будет применено при открытии</span><% } %>
               <br><small><%= n.body %></small>
               <br><small class="text-muted"><%= new Date(n.created_at).toLocaleString() %></small>
             </li>
@@ -107,7 +116,6 @@
       </div>
     </div>
 
-    <!-- График -->
     <h4 class="mt-5">График цены</h4>
     <div class="chart-controls">
       <label>Тип:</label>
@@ -146,13 +154,9 @@
 
   <script>
     (function() {
-      // Ждём полной загрузки библиотеки
       function waitForLib(callback) {
-        if (typeof LightweightCharts !== 'undefined') {
-          callback();
-        } else {
-          setTimeout(() => waitForLib(callback), 100);
-        }
+        if (typeof LightweightCharts !== 'undefined') callback();
+        else setTimeout(() => waitForLib(callback), 100);
       }
 
       waitForLib(() => {
@@ -171,55 +175,33 @@
 
         function createChart() {
           try {
-            if (chart) {
-              chart.remove();
-              chart = null;
-              candleSeries = null;
-              lineSeries = null;
-            }
-
+            if (chart) { chart.remove(); chart = null; candleSeries = null; lineSeries = null; }
             const type = chartTypeSelect.value;
             const interval = intervalSelect.value;
             const width = container.clientWidth || 800;
             const height = container.clientHeight || 500;
 
-            // Проверка наличия методов (дополнительная страховка)
             if (typeof LightweightCharts.createChart !== 'function') {
-              throw new Error('LightweightCharts.createChart не функция. Библиотека повреждена.');
+              throw new Error('Библиотека графиков повреждена.');
             }
-
             chart = LightweightCharts.createChart(container, {
               width, height,
-              layout: {
-                backgroundColor: '#1e1e1e',
-                textColor: '#d1d4dc',
-              },
-              grid: {
-                vertLines: { color: '#2B2B43' },
-                horzLines: { color: '#2B2B43' },
-              },
+              layout: { backgroundColor: '#1e1e1e', textColor: '#d1d4dc' },
+              grid: { vertLines: { color: '#2B2B43' }, horzLines: { color: '#2B2B43' } },
               crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
               timeScale: { timeVisible: true, secondsVisible: false },
             });
-
-            if (!chart || typeof chart.addLineSeries !== 'function') {
-              throw new Error('Созданный объект графика не содержит addLineSeries. Версия библиотеки несовместима.');
-            }
 
             statusEl.textContent = 'Загрузка данных...';
             errorEl.textContent = '';
             debug('Загрузка данных...');
 
             fetch(`/api/price-history?type=${type}&interval=${interval}`)
-              .then(r => {
-                if (!r.ok) throw new Error('Сервер вернул ' + r.status);
-                return r.json();
-              })
+              .then(r => { if (!r.ok) throw new Error('Сервер вернул ' + r.status); return r.json(); })
               .then(json => {
                 const count = json.data ? json.data.length : 0;
-                debug(`Получено ${count} точек (интервал: ${interval}, тип: ${type})`);
+                debug(`Получено ${count} точек`);
                 statusEl.textContent = count === 0 ? 'Нет данных за выбранный период.' : '';
-
                 if (type === 'candle') {
                   candleSeries = chart.addCandlestickSeries({
                     upColor: '#26a69a', downColor: '#ef5350',
@@ -246,11 +228,7 @@
         }
 
         function resizeChart() {
-          if (chart) {
-            const w = container.clientWidth || 800;
-            const h = container.clientHeight || 500;
-            chart.resize(w, h);
-          }
+          if (chart) chart.resize(container.clientWidth || 800, container.clientHeight || 500);
         }
 
         function updateIntervalOptions() {
@@ -271,18 +249,13 @@
           if (firstValid) intervalSelect.value = firstValid;
         }
 
-        chartTypeSelect.addEventListener('change', () => {
-          updateIntervalOptions();
-          createChart();
-        });
+        chartTypeSelect.addEventListener('change', () => { updateIntervalOptions(); createChart(); });
         intervalSelect.addEventListener('change', createChart);
         window.addEventListener('resize', resizeChart);
 
-        // Инициализация
         updateIntervalOptions();
         createChart();
 
-        // Автообновление
         setInterval(() => {
           if (!chart) return;
           const type = chartTypeSelect.value;
