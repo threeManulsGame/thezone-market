@@ -188,19 +188,34 @@
           fetch(`/api/price-history?type=${type}&interval=${interval}`)
             .then(r => { if (!r.ok) throw new Error('Сервер вернул ' + r.status); return r.json(); })
             .then(json => {
-              const count = json.data ? json.data.length : 0;
-              debug(`Получено ${count} точек`);
+              let data = json.data || [];
+              // Фильтруем невалидные значения
+              if (type === 'candle') {
+                data = data.filter(d =>
+                  d.time != null &&
+                  d.open != null && isFinite(d.open) &&
+                  d.high != null && isFinite(d.high) &&
+                  d.low != null && isFinite(d.low) &&
+                  d.close != null && isFinite(d.close)
+                );
+              } else {
+                data = data.filter(d => d.time != null && d.value != null && isFinite(d.value));
+              }
+
+              const count = data.length;
+              debug(`Получено ${count} точек (после фильтрации)`);
               statusEl.textContent = count === 0 ? 'Нет данных за выбранный период.' : '';
+
               if (type === 'candle') {
                 candleSeries = chart.addCandlestickSeries({
                   upColor: '#26a69a', downColor: '#ef5350',
                   borderDownColor: '#ef5350', borderUpColor: '#26a69a',
                   wickDownColor: '#ef5350', wickUpColor: '#26a69a',
                 });
-                candleSeries.setData(json.data || []);
+                candleSeries.setData(data);
               } else {
                 lineSeries = chart.addLineSeries({ color: '#2962FF', lineWidth: 2 });
-                lineSeries.setData(json.data || []);
+                lineSeries.setData(data);
               }
             })
             .catch(err => {
@@ -252,10 +267,21 @@
         fetch(`/api/price-history?type=${type}&interval=${interval}`)
           .then(r => r.json())
           .then(json => {
-            if (!json.data) return;
-            if (type === 'candle' && candleSeries) candleSeries.setData(json.data);
-            else if (type === 'line' && lineSeries) lineSeries.setData(json.data);
-            debug(`Автообновление: ${json.data.length} точек`);
+            let data = json.data || [];
+            if (type === 'candle') {
+              data = data.filter(d =>
+                d.time != null &&
+                d.open != null && isFinite(d.open) &&
+                d.high != null && isFinite(d.high) &&
+                d.low != null && isFinite(d.low) &&
+                d.close != null && isFinite(d.close)
+              );
+              if (candleSeries) candleSeries.setData(data);
+            } else {
+              data = data.filter(d => d.time != null && d.value != null && isFinite(d.value));
+              if (lineSeries) lineSeries.setData(data);
+            }
+            debug(`Автообновление: ${data.length} точек`);
             statusEl.textContent = '';
             errorEl.textContent = '';
           })
