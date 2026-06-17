@@ -10,19 +10,19 @@ const fetch = require('node-fetch');
 const app = express();
 const db = new Database('market.db');
 
-// Настройки из .env
+// Настройки
 const ADMIN_ID = process.env.ADMIN_DISCORD_ID;
-const STARTING_DIAMONDS = 0;
-const DRIFT_INTERVAL_MS = 5000;          // 5 секунд
-const DRIFT_FACTOR = 0.0002;            // ослабленный дрейф (±0.02% за тик)
-const PRICE_LOW = 3;                    // нижний порог
-const PRICE_HIGH = 5;                   // верхний порог
-const RETURN_STRENGTH = 0.005;          // сила возврата к коридору
-const MARKET_OPEN_HOUR = 7;             // открытие GMT+3
-const MARKET_CLOSE_HOUR = 19;           // закрытие GMT+3
+const STARTING_DIAMONDS = parseInt(process.env.STARTING_DIAMONDS) || 0;
+const DRIFT_INTERVAL_MS = 5000;
+const DRIFT_FACTOR = 0.0008;            // усиленное случайное колебание (±0.08% за тик)
+const PRICE_LOW = 3;
+const PRICE_HIGH = 5;
+const RETURN_STRENGTH = 0.005;
+const MARKET_OPEN_HOUR = 7;
+const MARKET_CLOSE_HOUR = 19;
 const BOT_SECRET_KEY = process.env.BOT_SECRET_KEY || 'default_change_me';
 
-// === Таблицы базы данных ===
+// === База данных ===
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     discord_id TEXT PRIMARY KEY,
@@ -71,13 +71,13 @@ db.exec(`
   );
 `);
 
-// Миграция для старых баз без поля applied
+// Миграция для старых баз
 const newsCols = db.prepare("PRAGMA table_info('news')").all().map(c => c.name);
 if (!newsCols.includes('applied')) {
   db.exec('ALTER TABLE news ADD COLUMN applied INTEGER DEFAULT 0');
 }
 
-// === Хранилище сессий ===
+// Хранилище сессий
 class SQLiteStore extends session.Store {
   get(sid, cb) {
     const row = db.prepare('SELECT sess FROM sessions WHERE sid = ? AND expired > ?').get(sid, Date.now());
@@ -95,7 +95,7 @@ class SQLiteStore extends session.Store {
   }
 }
 
-// === Настройки (геттер/сеттер) ===
+// Настройки
 const getSetting = (key, defaultValue) => {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
   return row ? row.value : defaultValue;
@@ -104,24 +104,18 @@ const setSetting = (key, value) => {
   db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
 };
 
-// Инициализация настроек при первом старте
-if (!getSetting('market_open', null)) {
-  setSetting('market_open', 'false');
-}
-if (!getSetting('last_price', null)) {
-  setSetting('last_price', '0');
-}
+if (!getSetting('market_open', null)) setSetting('market_open', 'false');
+if (!getSetting('last_price', null)) setSetting('last_price', '0');
 
-// === Инициализация пула (4 алмаза за акцию) ===
+// Инициализация пула (цена ~4 алмаза)
 const poolRow = db.prepare('SELECT * FROM pool WHERE id=1').get();
 if (!poolRow) {
-  // Дадим админу начальные средства и переместим часть в пул
   db.prepare('INSERT OR IGNORE INTO users(discord_id, username, avatar, diamond_balance, share_balance) VALUES (?, ?, ?, ?, ?)').run(ADMIN_ID, 'Admin', '', 2000000, 1000000);
   db.prepare('UPDATE users SET diamond_balance = diamond_balance - 1000000, share_balance = share_balance - 250000 WHERE discord_id = ?').run(ADMIN_ID);
   db.prepare('INSERT INTO pool (id, diamonds, shares) VALUES (1, 1000000, 250000)').run();
 }
 
-// === Passport.js ===
+// Passport
 passport.serializeUser((user, done) => done(null, user.discord_id));
 passport.deserializeUser((id, done) => {
   const user = db.prepare('SELECT * FROM users WHERE discord_id = ?').get(id);
@@ -138,7 +132,6 @@ passport.use(new DiscordStrategy({
     const { id, username, avatar } = profile;
     let user = db.prepare('SELECT * FROM users WHERE discord_id = ?').get(id);
     if (!user) {
-      // Новый пользователь: применить ожидающие начисления
       const pending = db.prepare('SELECT * FROM pending_balances WHERE discord_id = ?').get(id);
       let extraDiamonds = 0, extraShares = 0;
       if (pending) {
@@ -157,7 +150,6 @@ passport.use(new DiscordStrategy({
   }
 ));
 
-// === Express настройки ===
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.use(express.static('public'));
@@ -172,7 +164,6 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
-// === Middleware ===
 function ensureAuth(req, res, next) {
   if (req.isAuthenticated()) return next();
   res.redirect('/auth/discord');
@@ -182,7 +173,6 @@ function isMarketOpen() {
   return getSetting('market_open', 'false') === 'true';
 }
 
-// === Вспомогательные функции рынка ===
 function getCurrentPrice() {
   const pool = db.prepare('SELECT * FROM pool WHERE id=1').get();
   return pool.diamonds / pool.shares;
@@ -194,21 +184,19 @@ function recordPrice() {
   db.prepare('INSERT INTO price_history (price) VALUES (?)').run(price);
 }
 
-// Применить влияние новости к пулу и запустить коррекцию
 function applyNewsImpact(impact) {
   const pool = db.prepare('SELECT * FROM pool WHERE id=1').get();
   db.prepare('UPDATE pool SET diamonds = diamonds * ? WHERE id=1').run(1 + impact / 100);
   recordPrice();
 
-  const correction = -impact * (0.3 + Math.random() * 0.5); // 30-80% обратно
+  const correction = -impact * (0.3 + Math.random() * 0.5);
   if (Math.abs(correction) > 0.1) {
-    const totalTicks = 360; // 30 минут при 5-секундном тике
+    const totalTicks = 360;
     const stepPerTick = correction / totalTicks;
     db.prepare('INSERT INTO corrections (remaining_percent, step_per_tick, ticks_left) VALUES (?, ?, ?)').run(correction, stepPerTick, totalTicks);
   }
 }
 
-// Применить все не применённые новости (при открытии рынка)
 function processPendingNews() {
   const pendingNews = db.prepare('SELECT * FROM news WHERE applied = 0').all();
   for (const news of pendingNews) {
@@ -217,7 +205,6 @@ function processPendingNews() {
   }
 }
 
-// Один шаг коррекции
 function applyCorrections() {
   const corrections = db.prepare('SELECT * FROM corrections').all();
   for (const corr of corrections) {
@@ -234,7 +221,6 @@ function applyCorrections() {
   }
 }
 
-// Средняя реверсия к коридору 3-5
 function applyMeanReversion() {
   const pool = db.prepare('SELECT * FROM pool WHERE id=1').get();
   const price = pool.diamonds / pool.shares;
@@ -250,7 +236,6 @@ function applyMeanReversion() {
   recordPrice();
 }
 
-// Случайный дрейф (только во время торгов)
 function applyDrift() {
   if (!isMarketOpen()) return;
   const pool = db.prepare('SELECT * FROM pool WHERE id=1').get();
@@ -264,7 +249,6 @@ function applyDrift() {
   applyCorrections();
 }
 
-// === Автоматическое открытие/закрытие по GMT+3 ===
 function checkSchedule() {
   const now = new Date();
   const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
@@ -281,21 +265,17 @@ function checkSchedule() {
   }
 }
 
-// === Периодические задачи ===
 setInterval(applyDrift, DRIFT_INTERVAL_MS);
-setInterval(checkSchedule, 30000); // проверка расписания каждые 30 секунд
+setInterval(checkSchedule, 30000);
 
-// === Маршруты ===
+// Маршруты
 app.get('/auth/discord', passport.authenticate('discord'));
 app.get('/auth/discord/callback',
   passport.authenticate('discord', { failureRedirect: '/' }),
   (req, res) => res.redirect('/')
 );
-app.get('/logout', (req, res) => {
-  req.logout(() => res.redirect('/'));
-});
+app.get('/logout', (req, res) => { req.logout(() => res.redirect('/')); });
 
-// Главная страница
 app.get('/', ensureAuth, (req, res) => {
   const pool = db.prepare('SELECT * FROM pool WHERE id=1').get();
   const price = getCurrentPrice();
@@ -308,19 +288,12 @@ app.get('/', ensureAuth, (req, res) => {
   const marketOpen = isMarketOpen();
 
   res.render('index', {
-    user,
-    price: price.toFixed(4),
-    lastPrice: lastPrice.toFixed(4),
-    priceChange,
-    pool,
-    news,
-    majorShareholders,
-    isAdmin: user.discord_id === ADMIN_ID,
-    marketOpen
+    user, price: price.toFixed(4), lastPrice: lastPrice.toFixed(4), priceChange,
+    pool, news, majorShareholders,
+    isAdmin: user.discord_id === ADMIN_ID, marketOpen
   });
 });
 
-// Покупка акций
 app.post('/buy', ensureAuth, (req, res) => {
   if (!isMarketOpen()) return res.send('Рынок закрыт.');
   const sharesToBuy = parseFloat(req.body.shares);
@@ -336,7 +309,6 @@ app.post('/buy', ensureAuth, (req, res) => {
   res.redirect('/');
 });
 
-// Продажа акций
 app.post('/sell', ensureAuth, (req, res) => {
   if (!isMarketOpen()) return res.send('Рынок закрыт.');
   const sharesToSell = parseFloat(req.body.shares);
@@ -352,7 +324,6 @@ app.post('/sell', ensureAuth, (req, res) => {
   res.redirect('/');
 });
 
-// === Админ-панель ===
 app.get('/admin', ensureAuth, (req, res) => {
   if (req.user.discord_id !== ADMIN_ID) return res.status(403).send('Доступ запрещён');
   const users = db.prepare('SELECT * FROM users ORDER BY diamond_balance DESC').all();
@@ -363,7 +334,6 @@ app.get('/admin', ensureAuth, (req, res) => {
   res.render('admin', { users, pool, news, pending, marketOpen, isAdmin: true });
 });
 
-// Открыть/закрыть торги
 app.post('/admin/market', ensureAuth, (req, res) => {
   if (req.user.discord_id !== ADMIN_ID) return res.status(403).end();
   const action = req.body.action;
@@ -376,7 +346,6 @@ app.post('/admin/market', ensureAuth, (req, res) => {
   res.redirect('/admin');
 });
 
-// Полный сброс биржи (только с кодовым словом)
 app.post('/admin/reset', ensureAuth, (req, res) => {
   if (req.user.discord_id !== ADMIN_ID) return res.status(403).end();
   const { code } = req.body;
@@ -397,7 +366,6 @@ app.post('/admin/reset', ensureAuth, (req, res) => {
   res.redirect('/admin');
 });
 
-// Ручная новость
 app.post('/admin/news', ensureAuth, (req, res) => {
   if (req.user.discord_id !== ADMIN_ID) return res.status(403).end();
   const { title, body, impact } = req.body;
@@ -405,13 +373,10 @@ app.post('/admin/news', ensureAuth, (req, res) => {
   if (!title || isNaN(impactNum)) return res.redirect('/admin');
   const applied = isMarketOpen() ? 1 : 0;
   db.prepare('INSERT INTO news (title, body, impact, applied) VALUES (?, ?, ?, ?)').run(title, body, impactNum, applied);
-  if (applied) {
-    applyNewsImpact(impactNum);
-  }
+  if (applied) applyNewsImpact(impactNum);
   res.redirect('/admin');
 });
 
-// Перевод между пользователями
 app.post('/admin/transfer', ensureAuth, (req, res) => {
   if (req.user.discord_id !== ADMIN_ID) return res.status(403).end();
   const { from, to, type, amount } = req.body;
@@ -432,7 +397,6 @@ app.post('/admin/transfer', ensureAuth, (req, res) => {
   res.redirect('/admin');
 });
 
-// Установить точный баланс
 app.post('/admin/setbalance', ensureAuth, (req, res) => {
   if (req.user.discord_id !== ADMIN_ID) return res.status(403).end();
   const { discord_id, field, value } = req.body;
@@ -445,7 +409,6 @@ app.post('/admin/setbalance', ensureAuth, (req, res) => {
   res.redirect('/admin');
 });
 
-// Начисление любому Discord ID (в том числе незарегистрированному)
 app.post('/admin/pending', ensureAuth, (req, res) => {
   if (req.user.discord_id !== ADMIN_ID) return res.status(403).end();
   const { discord_id, type, amount } = req.body;
@@ -453,19 +416,13 @@ app.post('/admin/pending', ensureAuth, (req, res) => {
   if (!discord_id || isNaN(amt) || amt <= 0) return res.redirect('/admin');
   const user = db.prepare('SELECT * FROM users WHERE discord_id = ?').get(discord_id);
   if (user) {
-    if (type === 'diamonds') {
-      db.prepare('UPDATE users SET diamond_balance = diamond_balance + ? WHERE discord_id = ?').run(amt, discord_id);
-    } else if (type === 'shares') {
-      db.prepare('UPDATE users SET share_balance = share_balance + ? WHERE discord_id = ?').run(amt, discord_id);
-    }
+    if (type === 'diamonds') db.prepare('UPDATE users SET diamond_balance = diamond_balance + ? WHERE discord_id = ?').run(amt, discord_id);
+    else if (type === 'shares') db.prepare('UPDATE users SET share_balance = share_balance + ? WHERE discord_id = ?').run(amt, discord_id);
   } else {
     const pending = db.prepare('SELECT * FROM pending_balances WHERE discord_id = ?').get(discord_id);
     if (pending) {
-      if (type === 'diamonds') {
-        db.prepare('UPDATE pending_balances SET diamond_balance = diamond_balance + ? WHERE discord_id = ?').run(amt, discord_id);
-      } else if (type === 'shares') {
-        db.prepare('UPDATE pending_balances SET share_balance = share_balance + ? WHERE discord_id = ?').run(amt, discord_id);
-      }
+      if (type === 'diamonds') db.prepare('UPDATE pending_balances SET diamond_balance = diamond_balance + ? WHERE discord_id = ?').run(amt, discord_id);
+      else if (type === 'shares') db.prepare('UPDATE pending_balances SET share_balance = share_balance + ? WHERE discord_id = ?').run(amt, discord_id);
     } else {
       const initDiamonds = type === 'diamonds' ? amt : 0;
       const initShares = type === 'shares' ? amt : 0;
@@ -475,7 +432,6 @@ app.post('/admin/pending', ensureAuth, (req, res) => {
   res.redirect('/admin');
 });
 
-// Ручное изменение пула
 app.post('/admin/pool', ensureAuth, (req, res) => {
   if (req.user.discord_id !== ADMIN_ID) return res.status(403).end();
   const { diamonds, shares } = req.body;
@@ -486,7 +442,6 @@ app.post('/admin/pool', ensureAuth, (req, res) => {
   res.redirect('/admin');
 });
 
-// === API для бота (новости из Discord) ===
 app.post('/api/bot/news', (req, res) => {
   const { secret, title, body, impact } = req.body;
   if (secret !== BOT_SECRET_KEY) return res.status(403).json({ error: 'Invalid secret' });
@@ -494,13 +449,10 @@ app.post('/api/bot/news', (req, res) => {
   if (!title || isNaN(impactNum)) return res.status(400).json({ error: 'Missing fields' });
   const applied = isMarketOpen() ? 1 : 0;
   db.prepare('INSERT INTO news (title, body, impact, applied) VALUES (?, ?, ?, ?)').run(title, body, impactNum, applied);
-  if (applied) {
-    applyNewsImpact(impactNum);
-  }
+  if (applied) applyNewsImpact(impactNum);
   res.json({ success: true });
 });
 
-// === API для графика ===
 app.get('/api/price-history', ensureAuth, (req, res) => {
   const { interval, type } = req.query;
   if (!interval || !type) return res.status(400).json({ error: 'interval and type required' });
@@ -556,7 +508,6 @@ app.get('/api/price-history', ensureAuth, (req, res) => {
   return res.status(400).json({ error: 'Invalid type' });
 });
 
-// === Список акционеров >1% ===
 app.get('/shareholders', ensureAuth, (req, res) => {
   const pool = db.prepare('SELECT shares FROM pool WHERE id=1').get();
   const totalShares = pool.shares + db.prepare('SELECT COALESCE(SUM(share_balance),0) as total FROM users').get().total;
@@ -564,5 +515,4 @@ app.get('/shareholders', ensureAuth, (req, res) => {
   res.render('shareholders', { shareholders, totalShares, isAdmin: req.user.discord_id === ADMIN_ID });
 });
 
-// Запуск
 app.listen(process.env.PORT || 3000, () => console.log('Сервер запущен'));
