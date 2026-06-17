@@ -6,10 +6,13 @@ const DiscordStrategy = require('passport-discord').Strategy;
 const Database = require('better-sqlite3');
 const path = require('path');
 const fetch = require('node-fetch');
+const fs = require('fs');
 
 const app = express();
-const db = new Database('market.db');
 
+// Убедимся, что папка data существует
+fs.mkdirSync('./data', { recursive: true });
+const db = new Database('./data/market.db');
 // Настройки
 const ADMIN_ID = process.env.ADMIN_DISCORD_ID;
 const STARTING_DIAMONDS = parseInt(process.env.STARTING_DIAMONDS) || 0;
