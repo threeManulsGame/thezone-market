@@ -113,32 +113,15 @@
 
     <h4 class="mt-5">График цены</h4>
     <div class="chart-controls">
-      <label>Тип:</label>
-      <select id="chartType">
-        <option value="line">Линейный</option>
-        <option value="candle">Свечной</option>
-      </select>
-      <label>Интервал:</label>
+      <label>Интервал свечей:</label>
       <select id="chartInterval">
-        <optgroup label="Свечи">
-          <option value="5m" data-type="candle">5 мин</option>
-          <option value="15m" data-type="candle">15 мин</option>
-          <option value="30m" data-type="candle">30 мин</option>
-          <option value="1h" data-type="candle">1 час</option>
-          <option value="4h" data-type="candle">4 часа</option>
-          <option value="12h" data-type="candle">12 часов</option>
-          <option value="1d" data-type="candle">День</option>
-        </optgroup>
-        <optgroup label="Линия">
-          <option value="1h" data-type="line">1 час</option>
-          <option value="4h" data-type="line">4 часа</option>
-          <option value="12h" data-type="line">12 часов</option>
-          <option value="1d" data-type="line">1 день</option>
-          <option value="1w" data-type="line">1 неделя</option>
-          <option value="1M" data-type="line">1 месяц</option>
-          <option value="1y" data-type="line">1 год</option>
-          <option value="all" data-type="line">Всё</option>
-        </optgroup>
+        <option value="5m">5 мин</option>
+        <option value="15m">15 мин</option>
+        <option value="30m">30 мин</option>
+        <option value="1h">1 час</option>
+        <option value="4h">4 часа</option>
+        <option value="12h">12 часов</option>
+        <option value="1d">День</option>
       </select>
       <span id="chartStatus" class="text-muted ms-2">Загрузка...</span>
     </div>
@@ -150,12 +133,11 @@
   <script>
     (function() {
       const container = document.getElementById('chart-container');
-      const chartTypeSelect = document.getElementById('chartType');
       const intervalSelect = document.getElementById('chartInterval');
       const statusEl = document.getElementById('chartStatus');
       const debugEl = document.getElementById('debugInfo');
       const errorEl = document.getElementById('chart-error');
-      let chart = null, candleSeries = null, lineSeries = null;
+      let chart = null, candleSeries = null;
 
       function debug(msg) {
         debugEl.textContent = msg;
@@ -164,8 +146,7 @@
 
       function createChart() {
         try {
-          if (chart) { chart.remove(); chart = null; candleSeries = null; lineSeries = null; }
-          const type = chartTypeSelect.value;
+          if (chart) { chart.remove(); chart = null; candleSeries = null; }
           const interval = intervalSelect.value;
           const width = container.clientWidth || 800;
           const height = container.clientHeight || 500;
@@ -185,38 +166,28 @@
           errorEl.textContent = '';
           debug('Загрузка данных...');
 
-          fetch(`/api/price-history?type=${type}&interval=${interval}`)
+          fetch(`/api/price-history?type=candle&interval=${interval}`)
             .then(r => { if (!r.ok) throw new Error('Сервер вернул ' + r.status); return r.json(); })
             .then(json => {
               let data = json.data || [];
               // Фильтруем невалидные значения
-              if (type === 'candle') {
-                data = data.filter(d =>
-                  d.time != null &&
-                  d.open != null && isFinite(d.open) &&
-                  d.high != null && isFinite(d.high) &&
-                  d.low != null && isFinite(d.low) &&
-                  d.close != null && isFinite(d.close)
-                );
-              } else {
-                data = data.filter(d => d.time != null && d.value != null && isFinite(d.value));
-              }
-
+              data = data.filter(d =>
+                d.time != null &&
+                d.open != null && isFinite(d.open) &&
+                d.high != null && isFinite(d.high) &&
+                d.low != null && isFinite(d.low) &&
+                d.close != null && isFinite(d.close)
+              );
               const count = data.length;
-              debug(`Получено ${count} точек (после фильтрации)`);
+              debug(`Получено ${count} свечей`);
               statusEl.textContent = count === 0 ? 'Нет данных за выбранный период.' : '';
 
-              if (type === 'candle') {
-                candleSeries = chart.addCandlestickSeries({
-                  upColor: '#26a69a', downColor: '#ef5350',
-                  borderDownColor: '#ef5350', borderUpColor: '#26a69a',
-                  wickDownColor: '#ef5350', wickUpColor: '#26a69a',
-                });
-                candleSeries.setData(data);
-              } else {
-                lineSeries = chart.addLineSeries({ color: '#2962FF', lineWidth: 2 });
-                lineSeries.setData(data);
-              }
+              candleSeries = chart.addCandlestickSeries({
+                upColor: '#26a69a', downColor: '#ef5350',
+                borderDownColor: '#ef5350', borderUpColor: '#26a69a',
+                wickDownColor: '#ef5350', wickUpColor: '#26a69a',
+              });
+              candleSeries.setData(data);
             })
             .catch(err => {
               console.error(err);
@@ -235,53 +206,28 @@
         if (chart) chart.resize(container.clientWidth || 800, container.clientHeight || 500);
       }
 
-      function updateIntervalOptions() {
-        const type = chartTypeSelect.value;
-        const options = intervalSelect.options;
-        let firstValid = null;
-        for (let opt of options) {
-          const optType = opt.getAttribute('data-type');
-          if (optType) {
-            if (optType === type) {
-              opt.disabled = false;
-              if (!firstValid) firstValid = opt.value;
-            } else {
-              opt.disabled = true;
-            }
-          }
-        }
-        if (firstValid) intervalSelect.value = firstValid;
-      }
-
-      chartTypeSelect.addEventListener('change', () => { updateIntervalOptions(); createChart(); });
       intervalSelect.addEventListener('change', createChart);
       window.addEventListener('resize', resizeChart);
 
-      updateIntervalOptions();
       createChart();
 
+      // Автообновление
       setInterval(() => {
-        if (!chart) return;
-        const type = chartTypeSelect.value;
+        if (!chart || !candleSeries) return;
         const interval = intervalSelect.value;
-        fetch(`/api/price-history?type=${type}&interval=${interval}`)
+        fetch(`/api/price-history?type=candle&interval=${interval}`)
           .then(r => r.json())
           .then(json => {
             let data = json.data || [];
-            if (type === 'candle') {
-              data = data.filter(d =>
-                d.time != null &&
-                d.open != null && isFinite(d.open) &&
-                d.high != null && isFinite(d.high) &&
-                d.low != null && isFinite(d.low) &&
-                d.close != null && isFinite(d.close)
-              );
-              if (candleSeries) candleSeries.setData(data);
-            } else {
-              data = data.filter(d => d.time != null && d.value != null && isFinite(d.value));
-              if (lineSeries) lineSeries.setData(data);
-            }
-            debug(`Автообновление: ${data.length} точек`);
+            data = data.filter(d =>
+              d.time != null &&
+              d.open != null && isFinite(d.open) &&
+              d.high != null && isFinite(d.high) &&
+              d.low != null && isFinite(d.low) &&
+              d.close != null && isFinite(d.close)
+            );
+            candleSeries.setData(data);
+            debug(`Автообновление: ${data.length} свечей`);
             statusEl.textContent = '';
             errorEl.textContent = '';
           })
