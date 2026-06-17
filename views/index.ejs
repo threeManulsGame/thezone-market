@@ -5,12 +5,7 @@
   <title>The Zone Market</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script src="/js/lightweight-charts.standalone.production.js"></script>
-  <script>
-    if (typeof LightweightCharts === 'undefined') {
-      document.write('<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"><\/script>');
-    }
-  </script>
+  <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
   <style>
     #chart-container { width: 100%; height: 500px; margin-top: 20px; background: #1e1e1e; border-radius: 8px; overflow: hidden; }
     .chart-controls { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
@@ -154,125 +149,118 @@
 
   <script>
     (function() {
-      function waitForLib(callback) {
-        if (typeof LightweightCharts !== 'undefined') callback();
-        else setTimeout(() => waitForLib(callback), 100);
+      const container = document.getElementById('chart-container');
+      const chartTypeSelect = document.getElementById('chartType');
+      const intervalSelect = document.getElementById('chartInterval');
+      const statusEl = document.getElementById('chartStatus');
+      const debugEl = document.getElementById('debugInfo');
+      const errorEl = document.getElementById('chart-error');
+      let chart = null, candleSeries = null, lineSeries = null;
+
+      function debug(msg) {
+        debugEl.textContent = msg;
+        console.log('[Chart]', msg);
       }
 
-      waitForLib(() => {
-        const container = document.getElementById('chart-container');
-        const chartTypeSelect = document.getElementById('chartType');
-        const intervalSelect = document.getElementById('chartInterval');
-        const statusEl = document.getElementById('chartStatus');
-        const debugEl = document.getElementById('debugInfo');
-        const errorEl = document.getElementById('chart-error');
-        let chart = null, candleSeries = null, lineSeries = null;
-
-        function debug(msg) {
-          debugEl.textContent = msg;
-          console.log('[Chart]', msg);
-        }
-
-        function createChart() {
-          try {
-            if (chart) { chart.remove(); chart = null; candleSeries = null; lineSeries = null; }
-            const type = chartTypeSelect.value;
-            const interval = intervalSelect.value;
-            const width = container.clientWidth || 800;
-            const height = container.clientHeight || 500;
-
-            if (typeof LightweightCharts.createChart !== 'function') {
-              throw new Error('Библиотека графиков повреждена.');
-            }
-            chart = LightweightCharts.createChart(container, {
-              width, height,
-              layout: { backgroundColor: '#1e1e1e', textColor: '#d1d4dc' },
-              grid: { vertLines: { color: '#2B2B43' }, horzLines: { color: '#2B2B43' } },
-              crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-              timeScale: { timeVisible: true, secondsVisible: false },
-            });
-
-            statusEl.textContent = 'Загрузка данных...';
-            errorEl.textContent = '';
-            debug('Загрузка данных...');
-
-            fetch(`/api/price-history?type=${type}&interval=${interval}`)
-              .then(r => { if (!r.ok) throw new Error('Сервер вернул ' + r.status); return r.json(); })
-              .then(json => {
-                const count = json.data ? json.data.length : 0;
-                debug(`Получено ${count} точек`);
-                statusEl.textContent = count === 0 ? 'Нет данных за выбранный период.' : '';
-                if (type === 'candle') {
-                  candleSeries = chart.addCandlestickSeries({
-                    upColor: '#26a69a', downColor: '#ef5350',
-                    borderDownColor: '#ef5350', borderUpColor: '#26a69a',
-                    wickDownColor: '#ef5350', wickUpColor: '#26a69a',
-                  });
-                  candleSeries.setData(json.data || []);
-                } else {
-                  lineSeries = chart.addLineSeries({ color: '#2962FF', lineWidth: 2 });
-                  lineSeries.setData(json.data || []);
-                }
-              })
-              .catch(err => {
-                console.error(err);
-                errorEl.textContent = 'Ошибка загрузки данных: ' + err.message;
-                statusEl.textContent = 'Ошибка';
-                debug('Ошибка: ' + err.message);
-              });
-          } catch (e) {
-            console.error(e);
-            errorEl.textContent = 'Ошибка создания графика: ' + e.message;
-            debug('Критическая ошибка: ' + e.message);
-          }
-        }
-
-        function resizeChart() {
-          if (chart) chart.resize(container.clientWidth || 800, container.clientHeight || 500);
-        }
-
-        function updateIntervalOptions() {
-          const type = chartTypeSelect.value;
-          const options = intervalSelect.options;
-          let firstValid = null;
-          for (let opt of options) {
-            const optType = opt.getAttribute('data-type');
-            if (optType) {
-              if (optType === type) {
-                opt.disabled = false;
-                if (!firstValid) firstValid = opt.value;
-              } else {
-                opt.disabled = true;
-              }
-            }
-          }
-          if (firstValid) intervalSelect.value = firstValid;
-        }
-
-        chartTypeSelect.addEventListener('change', () => { updateIntervalOptions(); createChart(); });
-        intervalSelect.addEventListener('change', createChart);
-        window.addEventListener('resize', resizeChart);
-
-        updateIntervalOptions();
-        createChart();
-
-        setInterval(() => {
-          if (!chart) return;
+      function createChart() {
+        try {
+          if (chart) { chart.remove(); chart = null; candleSeries = null; lineSeries = null; }
           const type = chartTypeSelect.value;
           const interval = intervalSelect.value;
+          const width = container.clientWidth || 800;
+          const height = container.clientHeight || 500;
+
+          if (typeof LightweightCharts.createChart !== 'function') {
+            throw new Error('Библиотека графиков повреждена.');
+          }
+          chart = LightweightCharts.createChart(container, {
+            width, height,
+            layout: { backgroundColor: '#1e1e1e', textColor: '#d1d4dc' },
+            grid: { vertLines: { color: '#2B2B43' }, horzLines: { color: '#2B2B43' } },
+            crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+            timeScale: { timeVisible: true, secondsVisible: false },
+          });
+
+          statusEl.textContent = 'Загрузка данных...';
+          errorEl.textContent = '';
+          debug('Загрузка данных...');
+
           fetch(`/api/price-history?type=${type}&interval=${interval}`)
-            .then(r => r.json())
+            .then(r => { if (!r.ok) throw new Error('Сервер вернул ' + r.status); return r.json(); })
             .then(json => {
-              if (!json.data) return;
-              if (type === 'candle' && candleSeries) candleSeries.setData(json.data);
-              else if (type === 'line' && lineSeries) lineSeries.setData(json.data);
-              debug(`Автообновление: ${json.data.length} точек`);
-              statusEl.textContent = '';
-              errorEl.textContent = '';
+              const count = json.data ? json.data.length : 0;
+              debug(`Получено ${count} точек`);
+              statusEl.textContent = count === 0 ? 'Нет данных за выбранный период.' : '';
+              if (type === 'candle') {
+                candleSeries = chart.addCandlestickSeries({
+                  upColor: '#26a69a', downColor: '#ef5350',
+                  borderDownColor: '#ef5350', borderUpColor: '#26a69a',
+                  wickDownColor: '#ef5350', wickUpColor: '#26a69a',
+                });
+                candleSeries.setData(json.data || []);
+              } else {
+                lineSeries = chart.addLineSeries({ color: '#2962FF', lineWidth: 2 });
+                lineSeries.setData(json.data || []);
+              }
             })
-            .catch(e => console.error('Auto-update error:', e));
-        }, 10000);
-      });
+            .catch(err => {
+              console.error(err);
+              errorEl.textContent = 'Ошибка загрузки данных: ' + err.message;
+              statusEl.textContent = 'Ошибка';
+              debug('Ошибка: ' + err.message);
+            });
+        } catch (e) {
+          console.error(e);
+          errorEl.textContent = 'Ошибка создания графика: ' + e.message;
+          debug('Критическая ошибка: ' + e.message);
+        }
+      }
+
+      function resizeChart() {
+        if (chart) chart.resize(container.clientWidth || 800, container.clientHeight || 500);
+      }
+
+      function updateIntervalOptions() {
+        const type = chartTypeSelect.value;
+        const options = intervalSelect.options;
+        let firstValid = null;
+        for (let opt of options) {
+          const optType = opt.getAttribute('data-type');
+          if (optType) {
+            if (optType === type) {
+              opt.disabled = false;
+              if (!firstValid) firstValid = opt.value;
+            } else {
+              opt.disabled = true;
+            }
+          }
+        }
+        if (firstValid) intervalSelect.value = firstValid;
+      }
+
+      chartTypeSelect.addEventListener('change', () => { updateIntervalOptions(); createChart(); });
+      intervalSelect.addEventListener('change', createChart);
+      window.addEventListener('resize', resizeChart);
+
+      updateIntervalOptions();
+      createChart();
+
+      setInterval(() => {
+        if (!chart) return;
+        const type = chartTypeSelect.value;
+        const interval = intervalSelect.value;
+        fetch(`/api/price-history?type=${type}&interval=${interval}`)
+          .then(r => r.json())
+          .then(json => {
+            if (!json.data) return;
+            if (type === 'candle' && candleSeries) candleSeries.setData(json.data);
+            else if (type === 'line' && lineSeries) lineSeries.setData(json.data);
+            debug(`Автообновление: ${json.data.length} точек`);
+            statusEl.textContent = '';
+            errorEl.textContent = '';
+          })
+          .catch(e => console.error('Auto-update error:', e));
+      }, 10000);
     })();
   </script>
 </body>
