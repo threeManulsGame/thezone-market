@@ -10,14 +10,15 @@ const fs = require('fs');
 
 const app = express();
 
-// Убедимся, что папка data существует
+// Создаём папку data, если её нет, и кладём туда базу
 fs.mkdirSync('./data', { recursive: true });
 const db = new Database('./data/market.db');
+
 // Настройки
 const ADMIN_ID = process.env.ADMIN_DISCORD_ID;
 const STARTING_DIAMONDS = parseInt(process.env.STARTING_DIAMONDS) || 0;
 const DRIFT_INTERVAL_MS = 5000;
-const DRIFT_FACTOR = 0.0008;            // усиленное случайное колебание (±0.08% за тик)
+const DRIFT_FACTOR = 0.0008;            // усиленный дрейф
 const PRICE_LOW = 3;
 const PRICE_HIGH = 5;
 const RETURN_STRENGTH = 0.005;
@@ -25,7 +26,7 @@ const MARKET_OPEN_HOUR = 7;
 const MARKET_CLOSE_HOUR = 19;
 const BOT_SECRET_KEY = process.env.BOT_SECRET_KEY || 'default_change_me';
 
-// === База данных ===
+// Таблицы
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     discord_id TEXT PRIMARY KEY,
@@ -98,7 +99,6 @@ class SQLiteStore extends session.Store {
   }
 }
 
-// Настройки
 const getSetting = (key, defaultValue) => {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
   return row ? row.value : defaultValue;
@@ -110,7 +110,7 @@ const setSetting = (key, value) => {
 if (!getSetting('market_open', null)) setSetting('market_open', 'false');
 if (!getSetting('last_price', null)) setSetting('last_price', '0');
 
-// Инициализация пула (цена ~4 алмаза)
+// Инициализация пула
 const poolRow = db.prepare('SELECT * FROM pool WHERE id=1').get();
 if (!poolRow) {
   db.prepare('INSERT OR IGNORE INTO users(discord_id, username, avatar, diamond_balance, share_balance) VALUES (?, ?, ?, ?, ?)').run(ADMIN_ID, 'Admin', '', 2000000, 1000000);
@@ -485,7 +485,9 @@ app.get('/api/price-history', ensureAuth, (req, res) => {
       }
     }
     if (currentCandle) candles.push(currentCandle);
-    return res.json({ type: 'candle', data: candles });
+    // Фильтруем возможные null (на всякий случай)
+    const validCandles = candles.filter(c => c.open != null && c.high != null && c.low != null && c.close != null && isFinite(c.open) && isFinite(c.high) && isFinite(c.low) && isFinite(c.close));
+    return res.json({ type: 'candle', data: validCandles });
   }
   else if (type === 'line') {
     if (!lineIntervals.includes(interval)) return res.status(400).json({ error: 'Invalid line interval' });
@@ -506,7 +508,9 @@ app.get('/api/price-history', ensureAuth, (req, res) => {
       rows = rows.filter((_, i) => i % step === 0);
     }
     const data = rows.map(r => ({ time: r.timestamp, value: r.price }));
-    return res.json({ type: 'line', data });
+    // Фильтруем null и невалидные значения
+    const validData = data.filter(d => d.time != null && d.value != null && isFinite(d.value));
+    return res.json({ type: 'line', data: validData });
   }
   return res.status(400).json({ error: 'Invalid type' });
 });
